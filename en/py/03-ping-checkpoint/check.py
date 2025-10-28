@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
 Check script for Lesson 3: Ping Checkpoint
-Validates that the student's solution can ping remote peers and measure round-trip times.
+Validates that the student's solution (main.py) is:
+1. Using Noise and Yamux
+2. Establishing a connection
+3. Sending pings on an interval
+4. Receiving pongs and calculating RTT
+5. Handling streams correctly
 """
 
 import subprocess
@@ -10,16 +15,17 @@ import os
 import re
 
 def validate_peer_id(peer_id_str):
-    """Validate that the peer ID string is a valid libp2p PeerId format"""
-    # Basic format validation - should start with 12D3KooW (Ed25519 peer IDs)
-    if not peer_id_str.startswith("12D3KooW"):
-        return False, f"Invalid peer ID format. Expected to start with '12D3KooW', got: {peer_id_str}"
+    """Validate that the peer ID string is a valid 'Qm...' PeerId format"""
     
-    # Length check - valid peer IDs should be around 52-55 characters
-    if len(peer_id_str) < 45 or len(peer_id_str) > 60:
-        return False, f"Peer ID length seems invalid. Expected 45-60 chars, got {len(peer_id_str)}: {peer_id_str}"
+    # 1. Check prefix
+    if not peer_id_str.startswith("Qm"):
+        return False, f"Invalid peer ID format. Expected to start with 'Qm', got: {peer_id_str}"
     
-    # Character set validation - should only contain base58 characters
+    # 2. Length check - RSA peer IDs are 46 chars
+    if len(peer_id_str) != 46:
+        return False, f"Peer ID length is incorrect. Expected 46 chars for RSA key, got {len(peer_id_str)}: {peer_id_str}"
+    
+    # 3. Character set validation - should only contain base58 characters
     valid_chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
     for char in peer_id_str:
         if char not in valid_chars:
@@ -27,20 +33,8 @@ def validate_peer_id(peer_id_str):
     
     return True, f"{peer_id_str}"
 
-def validate_multiaddr(addr_str):
-    """Validate that the address string looks like a valid multiaddr"""
-    # Basic multiaddr validation - should start with /ip4/ or /ip6/
-    if not (addr_str.startswith("/ip4/") or addr_str.startswith("/ip6/")):
-        return False, f"Invalid multiaddr format: {addr_str}"
-    
-    # Should contain /tcp for TCP transport or /quic-v1 for QUIC transport
-    if not ("/tcp" in addr_str or "/quic-v1" in addr_str):
-        return False, f"Missing TCP or QUIC transport in multiaddr: {addr_str}"
-     
-    return True, f"{addr_str}"
-
 def check_output():
-    """Check the output log for expected TCP transport functionality"""
+    """Check the output log for expected ping functionality"""
     if not os.path.exists("checker.log"):
         print("x checker.log file not found")
         return False
@@ -55,90 +49,99 @@ def check_output():
             print("x checker.log is empty - application may have failed to start")
             return False
 
-        # a correct solution causes the checker to output a sequence of messages like the following:
-        # incoming,/ip4/172.16.16.17/tcp/9092,/ip4/172.16.16.16/tcp/41972
-        # connected,12D3KooWC56YFhhdVtAuz6hGzhVwKu6SyYQ6qh4PMkTJawXVC8rE,/ip4/172.16.16.16/tcp/41972
-        # ping,12D3KooWC56YFhhdVtAuz6hGzhVwKu6SyYQ6qh4PMkTJawXVC8rE,10 ms
-        # closed,12D3KooWC56YFhhdVtAuz6hGzhVwKu6SyYQ6qh4PMkTJawXVC8rE
-
-        # check for incoming
-        incoming_pattern = r"incoming,([/\w\.:]+),([/\w\.:]+)"
-        incoming_matches = re.search(incoming_pattern, output)
-        if not incoming_matches:
-            print("x No incoming dial received")
+        # --- Check Server Setup ---
+        
+        if not re.search(r"Security: Noise encryption enabled", output):
+            print("x Server did not report 'Security: Noise encryption enabled'")
             print(f"i Actual output: {repr(output)}")
             return False
+        print("v Security: Noise encryption enabled")
 
-        t = incoming_matches.group(1)
-        valid, t_message = validate_multiaddr(t)
-        if not valid:
-            print(f"x {t_message}")
+        if not re.search(r"Multiplexing: Yamux enabled", output):
+            print("x Server did not report 'Multiplexing: Yamux enabled'")
+            print(f"i Actual output: {repr(output)}")
             return False
+        print("v Multiplexing: Yamux enabled")
+
+        # --- Check Client Connection ---
         
-        f = incoming_matches.group(2)
-        valid, f_message = validate_multiaddr(f)
-        if not valid:
-            print(f"x {f_message}")
-            return False
-
-        print(f"v Your peer at {f_message} dialed remote peer at {t_message}")
-
-        # check for connected
-        connected_pattern = r"connected,(12D3KooW[A-Za-z0-9]+),([/\w\.:]+)"
+        connected_pattern = r"Connected to (Qm[1-9A-HJ-NP-Za-km-z]{44})"
         connected_matches = re.search(connected_pattern, output)
         if not connected_matches:
-            print("x No connection established")
+            print("x No client connection message 'Connected to ...' found")
             print(f"i Actual output: {repr(output)}")
             return False
-
-        peerid = connected_matches.group(1)
-        valid, peerid_message = validate_peer_id(peerid)
-        if not valid:
-            print(f"x {peerid_message}")
-            return False
         
-        f = connected_matches.group(2)
-        valid, f_message = validate_multiaddr(f)
+        client_peer_id = connected_matches.group(1)
+        valid, msg = validate_peer_id(client_peer_id)
         if not valid:
-            print(f"x {f_message}")
+            print(f"x {msg}")
             return False
+        print(f"v Client connected to peer: {client_peer_id}")
 
-        print(f"v Connection established with {peerid_message} at {f_message}")
-
-        # check for ping
-        ping_pattern = r"ping,(12D3KooW[A-Za-z0-9]+),(\d+\s*ms)"
-        ping_matches = re.search(ping_pattern, output)
-        if not ping_matches:
-            print("x No ping received")
+        # --- Check Server Ping Handling ---
+        
+        ping_rx_pattern = r"received ping from (Qm[1-9A-HJ-NP-Za-km-z]{44})"
+        ping_rx_matches = re.search(ping_rx_pattern, output)
+        if not ping_rx_matches:
+            print("x No server 'received ping from ...' message found")
             print(f"i Actual output: {repr(output)}")
             return False
-
-        peerid = ping_matches.group(1)
-        valid, peerid_message = validate_peer_id(peerid)
+        
+        server_rx_peer_id = ping_rx_matches.group(1)
+        valid, msg = validate_peer_id(server_rx_peer_id)
         if not valid:
-            print(f"x {peerid_message}")
+            print(f"x {msg}")
+            return False
+        print(f"v Server received ping from: {server_rx_peer_id}")
+
+        ping_tx_pattern = r"responded with pong to (Qm[1-9A-HJ-NP-Za-km-z]{44})"
+        ping_tx_matches = re.search(ping_tx_pattern, output)
+        if not ping_tx_matches:
+            print("x No server 'responded with pong to ...' message found")
+            print(f"i Actual output: {repr(output)}")
+            return False
+        print("v Server responded with pong")
+
+        # --- Check Client Ping RTT ---
+        
+        ping_rtt_pattern = r"ping: Success from (Qm[1-9A-HJ-NP-Za-km-z]{44}), RTT = (\d+\.\d+) ms"
+        ping_rtt_matches = re.search(ping_rtt_pattern, output)
+        if not ping_rtt_matches:
+            print("x No client 'ping: Success from ...' message found")
+            print("i This means RTT calculation is missing or formatted incorrectly.")
+            print(f"i Actual output: {repr(output)}")
             return False
         
-        ms = ping_matches.group(2)
+        client_rtt_peer_id = ping_rtt_matches.group(1)
+        rtt = ping_rtt_matches.group(2)
+        valid, msg = validate_peer_id(client_rtt_peer_id)
+        if not valid:
+            print(f"x {msg}")
+            return False
+        print(f"v Client reported ping success from {client_rtt_peer_id} with RTT = {rtt} ms")
 
-        print(f"v Ping received from {peerid_message} with RTT {ms}")
-
-        # check for closed
-        closed_pattern = r"closed,(12D3KooW[A-Za-z0-9]+)"
+        # --- Check Server Stream Closure ---
+        
+        closed_pattern = r"Closed ping stream from (Qm[1-9A-HJ-NP-Za-km-z]{44})"
         closed_matches = re.search(closed_pattern, output)
         if not closed_matches:
-            print("x Connection closure not detected")
+            print("x No server 'Closed ping stream from ...' message found")
+            print("i This means the server handler is not closing the stream correctly.")
             print(f"i Actual output: {repr(output)}")
             return False
-        
-        peerid = connected_matches.group(1)
-        valid, peerid_message = validate_peer_id(peerid)
-        if not valid:
-            print(f"x {peerid_message}")
+        print("v Server stream closed gracefully")
+
+        # --- Cross-Validation ---
+        if not (client_peer_id == client_rtt_peer_id):
+            print(f"x Mismatch: Client connected to {client_peer_id} but got ping from {client_rtt_peer_id}")
+            return False
+            
+        if not (server_rx_peer_id == ping_tx_matches.group(1) == closed_matches.group(1)):
+            print("x Mismatch: Server logs show different peer IDs for rx, tx, and close")
             return False
         
-        print(f"v Connection {peerid_message} closed gracefully")
-
+        print("v Peer IDs are consistent across client and server logs")
         return True
         
     except Exception as e:
@@ -158,11 +161,11 @@ def main():
         print("i " + "=" * 50)
         print("y Ping checkpoint completed successfully! 🎉")
         print("i You have successfully:")
-        print("i • Configured ping protocol with custom intervals")
-        print("i • Established bidirectional connectivity")
-        print("i • Measured round-trip times between peers")
-        print("i • Reached your first checkpoint!")
-        print("Ready for Lesson 4: QUIC Transport!")
+        print("i • Used Noise for security and Yamux for multiplexing")
+        print("i • Established a p2p connection")
+        print("i • Sent pings on a 1-second interval")
+        print("i • Measured and printed round-trip times (RTT)")
+        print("i • Handled streams correctly on the server")
         
         return True
         

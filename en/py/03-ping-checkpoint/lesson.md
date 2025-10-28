@@ -22,333 +22,71 @@ The libp2p ping protocol (`/ipfs/ping/1.0.0`) exchanges 32-byte payloads between
 
 ## Your Task
 
-You will create two versions:
-1. **Basic Version**: Simple ping without encryption/multiplexing
-2. **Advanced Version**: With Noise encryption and Yamux multiplexing
+Building on your TCP transport implementation from Lesson 2, you need to:
+
+1. **Configure Ping Settings**: Set up ping with a 1-second interval and 5-second timeout
+2. **Handle Ping Events**: Process `ping::Event` and display round-trip times
 
 ## Step-by-Step Instructions
 
-### Step 1: Basic Ping Implementation
+### Step 1: Handle Imports
 
-Create a file `ping_basic.py`:
-
-```python
-import argparse
-import os
-import multiaddr
-import trio
-from libp2p import new_host
-from libp2p.custom_types import TProtocol
-from libp2p.network.stream.net_stream import INetStream
-from libp2p.peer.peerinfo import info_from_p2p_addr
-
-PING_PROTOCOL_ID = TProtocol("/ipfs/ping/1.0.0")
-PING_LENGTH = 32
-RESP_TIMEOUT = 10
-
-async def handle_ping(stream: INetStream) -> None:
-    """Handle incoming ping requests"""
-    peer_id = stream.muxed_conn.peer_id
-    print(f"incoming,{peer_id}")
-    
-    while True:
-        try:
-            payload = await stream.read(PING_LENGTH)
-            if payload is None or len(payload) == 0:
-                break
-            
-            print(f"ping,{peer_id},received")
-            await stream.write(payload)
-            print(f"ping,{peer_id},responded")
-            
-        except Exception as e:
-            print(f"error,Ping handler error: {e}")
-            await stream.reset()
-            break
-    
-    print(f"closed,{peer_id}")
-
-async def send_ping(stream: INetStream) -> None:
-    """Send ping to remote peer"""
-    try:
-        payload = b"\x01" * PING_LENGTH
-        peer_id = stream.muxed_conn.peer_id
-        
-        print(f"ping,{peer_id},sending")
-        await stream.write(payload)
-        
-        with trio.fail_after(RESP_TIMEOUT):
-            response = await stream.read(PING_LENGTH)
-        
-        if response == payload:
-            print(f"ping,{peer_id},success")
-        else:
-            print(f"error,Ping response mismatch from {peer_id}")
-            
-    except trio.TooSlowError:
-        print(f"error,Ping timeout to {peer_id}")
-    except Exception as e:
-        print(f"error,Ping failed to {peer_id}: {e}")
-
-async def run_server(port: int) -> None:
-    """Run as ping server"""
-    listen_addr = multiaddr.Multiaddr(f"/ip4/0.0.0.0/tcp/{port}")
-    host = new_host()
-    
-    print("Starting Universal Connectivity Application...")
-    
-    async with host.run(listen_addrs=[listen_addr]):
-        host.set_stream_handler(PING_PROTOCOL_ID, handle_ping)
-        
-        peer_id = host.get_id()
-        addrs = host.get_addrs()
-        
-        print(f"Local peer id: {peer_id}")
-        if addrs:
-            print(f"Listening on: {addrs[0]}")
-            print(f"Full address: {addrs[0]}/p2p/{peer_id}")
-        
-        print("Waiting for connections...")
-        await trio.sleep_forever()
-
-async def run_client(destination: str) -> None:
-    """Run as ping client"""
-    listen_addr = multiaddr.Multiaddr("/ip4/0.0.0.0/tcp/0")
-    host = new_host()
-    
-    print("Starting Universal Connectivity Application...")
-    
-    async with host.run(listen_addrs=[listen_addr]), trio.open_nursery() as nursery:
-        peer_id = host.get_id()
-        print(f"Local peer id: {peer_id}")
-        
-        # Parse destination
-        maddr = multiaddr.Multiaddr(destination)
-        info = info_from_p2p_addr(maddr)
-        
-        print(f"Connecting to: {destination}")
-        await host.connect(info)
-        print(f"connected,{info.peer_id}")
-        
-        # Open ping stream
-        stream = await host.new_stream(info.peer_id, [PING_PROTOCOL_ID])
-        nursery.start_soon(send_ping, stream)
-
-def main():
-    parser = argparse.ArgumentParser(description="libp2p ping demo")
-    parser.add_argument("-p", "--port", default=8000, type=int, help="Port to listen on")
-    parser.add_argument("-d", "--destination", type=str, help="Destination multiaddr")
-    
-    args = parser.parse_args()
-    
-    try:
-        if args.destination:
-            trio.run(run_client, args.destination)
-        else:
-            trio.run(run_server, args.port)
-    except KeyboardInterrupt:
-        print("\nGoodbye!")
-
-if __name__ == "__main__":
-    main()
-```
-
-### Step 2: Advanced Ping with Noise and Yamux
-
-Create a file `ping_advanced.py`:
+We're loading up argparse for CLI args, logging and time for basics, multiaddr and trio for networking/async, and a bunch from libp2p for host creation, identities, streams, peer info, security (Noise), muxing (Yamux), and crypto primitives. Solid foundation for a secure P2P ping setup.
 
 ```python
 import argparse
-import os
-import multiaddr
-import trio
-from libp2p import new_host, generate_new_rsa_identity
-from libp2p.custom_types import TProtocol
-from libp2p.network.stream.net_stream import INetStream
-from libp2p.peer.peerinfo import info_from_p2p_addr
-from libp2p.security.noise.transport import Transport as NoiseTransport
-from libp2p.stream_muxer.yamux.yamux import Yamux, PROTOCOL_ID as YAMUX_PROTOCOL_ID
-from cryptography.hazmat.primitives.asymmetric import x25519
-
-PING_PROTOCOL_ID = TProtocol("/ipfs/ping/1.0.0")
-PING_LENGTH = 32
-RESP_TIMEOUT = 10
-
-class NoisePrivateKey:
-    def __init__(self, key):
-        self._key = key
-    
-    def to_bytes(self):
-        return self._key.private_bytes_raw()
-    
-    def public_key(self):
-        return NoisePublicKey(self._key.public_key())
-    
-    def get_public_key(self):
-        return self.public_key()
-
-class NoisePublicKey:
-    def __init__(self, key):
-        self._key = key
-    
-    def to_bytes(self):
-        return self._key.public_bytes_raw()
-
-async def handle_ping(stream: INetStream) -> None:
-    """Handle incoming ping requests"""
-    peer_id = stream.muxed_conn.peer_id
-    print(f"incoming,{peer_id}")
-    
-    while True:
-        try:
-            payload = await stream.read(PING_LENGTH)
-            if payload is None or len(payload) == 0:
-                break
-            
-            print(f"ping,{peer_id},received")
-            await stream.write(payload)
-            print(f"ping,{peer_id},responded")
-            
-        except Exception as e:
-            print(f"error,Ping handler error: {e}")
-            await stream.reset()
-            break
-    
-    print(f"closed,{peer_id}")
-
-async def send_ping(stream: INetStream) -> None:
-    """Send ping to remote peer"""
-    try:
-        payload = b"\x01" * PING_LENGTH
-        peer_id = stream.muxed_conn.peer_id
-        
-        print(f"ping,{peer_id},sending")
-        await stream.write(payload)
-        
-        with trio.fail_after(RESP_TIMEOUT):
-            response = await stream.read(PING_LENGTH)
-        
-        if response == payload:
-            print(f"ping,{peer_id},success")
-        else:
-            print(f"error,Ping response mismatch from {peer_id}")
-            
-    except trio.TooSlowError:
-        print(f"error,Ping timeout to {peer_id}")
-    except Exception as e:
-        print(f"error,Ping failed to {peer_id}: {e}")
-
-def create_secure_host():
-    """Create a libp2p host with Noise encryption and Yamux multiplexing"""
-    # Generate RSA keypair for libp2p identity
-    key_pair = generate_new_rsa_identity()
-    
-    # Generate X25519 keypair for Noise protocol
-    x25519_private_key = x25519.X25519PrivateKey.generate()
-    noise_privkey = NoisePrivateKey(x25519_private_key)
-    
-    # Create Noise transport
-    noise_transport = NoiseTransport(key_pair, noise_privkey=noise_privkey)
-    
-    # Configure security and multiplexing
-    sec_opt = {TProtocol("/noise"): noise_transport}
-    muxer_opt = {TProtocol(YAMUX_PROTOCOL_ID): Yamux}
-    
-    return new_host(
-        key_pair=key_pair,
-        sec_opt=sec_opt,
-        muxer_opt=muxer_opt
-    )
-
-async def run_server(port: int) -> None:
-    """Run as secure ping server"""
-    listen_addr = multiaddr.Multiaddr(f"/ip4/0.0.0.0/tcp/{port}")
-    host = create_secure_host()
-    
-    print("Starting Universal Connectivity Application...")
-    
-    async with host.run(listen_addrs=[listen_addr]):
-        host.set_stream_handler(PING_PROTOCOL_ID, handle_ping)
-        
-        peer_id = host.get_id()
-        addrs = host.get_addrs()
-        
-        print(f"Local peer id: {peer_id}")
-        if addrs:
-            print(f"Listening on: {addrs[0]}")
-            print(f"Full address: {addrs[0]}/p2p/{peer_id}")
-        
-        print("Security: Noise encryption enabled")
-        print("Multiplexing: Yamux enabled")
-        print("Waiting for connections...")
-        await trio.sleep_forever()
-
-async def run_client(destination: str) -> None:
-    """Run as secure ping client"""
-    listen_addr = multiaddr.Multiaddr("/ip4/0.0.0.0/tcp/0")
-    host = create_secure_host()
-    
-    print("Starting Universal Connectivity Application...")
-    
-    async with host.run(listen_addrs=[listen_addr]), trio.open_nursery() as nursery:
-        peer_id = host.get_id()
-        print(f"Local peer id: {peer_id}")
-        print("Security: Noise encryption enabled")
-        print("Multiplexing: Yamux enabled")
-        
-        # Parse destination
-        maddr = multiaddr.Multiaddr(destination)
-        info = info_from_p2p_addr(maddr)
-        
-        print(f"Connecting to: {destination}")
-        await host.connect(info)
-        print(f"connected,{info.peer_id}")
-        
-        # Open ping stream
-        stream = await host.new_stream(info.peer_id, [PING_PROTOCOL_ID])
-        nursery.start_soon(send_ping, stream)
-
-def main():
-    parser = argparse.ArgumentParser(description="Secure libp2p ping demo with Noise and Yamux")
-    parser.add_argument("-p", "--port", default=8000, type=int, help="Port to listen on")
-    parser.add_argument("-d", "--destination", type=str, help="Destination multiaddr")
-    
-    args = parser.parse_args()
-    
-    try:
-        if args.destination:
-            trio.run(run_client, args.destination)
-        else:
-            trio.run(run_server, args.port)
-    except KeyboardInterrupt:
-        print("\nGoodbye!")
-
-if __name__ == "__main__":
-    main()
-```
-
-### Step 3: Workshop Integration
-
-For the checkpoint validation, create `main.py` that matches the expected output format:
-
-```python
-import os
-import trio
-from libp2p import new_host, generate_new_rsa_identity
-from libp2p.custom_types import TProtocol
-from libp2p.network.stream.net_stream import INetStream
-from libp2p.peer.peerinfo import info_from_p2p_addr
-from libp2p.security.noise.transport import Transport as NoiseTransport
-from libp2p.stream_muxer.yamux.yamux import Yamux, PROTOCOL_ID as YAMUX_PROTOCOL_ID
-import multiaddr as Multiaddr
-from cryptography.hazmat.primitives.asymmetric import x25519
+import logging
 import time
-import re
 
+import multiaddr
+import trio
 
+from libp2p import (
+    new_host,
+    generate_new_rsa_identity,
+)
+from libp2p.custom_types import (
+    TProtocol,
+)
+from libp2p.network.stream.net_stream import (
+    INetStream,
+)
+from libp2p.peer.peerinfo import (
+    info_from_p2p_addr,
+)
+
+from libp2p.security.noise.transport import Transport as NoiseTransport
+from libp2p.stream_muxer.yamux.yamux import Yamux, PROTOCOL_ID as YAMUX_PROTOCOL_ID
+from cryptography.hazmat.primitives.asymmetric import x25519
+```
+
+### Step 2: Configure Logging
+
+Basic logging at WARNING level to keep output quiet, but we suppress noise from multiaddr, libp2p, and async_service specifically. Then bump the root logger to INFO for our app's key events balances verbosity without spam.
+
+```python
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
+logging.getLogger().setLevel(logging.INFO)
+```
+
+### Step 3: Define Ping Constants
+
+Here we set the protocol ID for our custom ping (IPFS-style), payload length (32 bytes), and response timeout (5s). These drive the ping/pong mechanics—keeps it standardized and tunable.
+
+```python
 PING_PROTOCOL_ID = TProtocol("/ipfs/ping/1.0.0")
 PING_LENGTH = 32
+RESP_TIMEOUT = 5
+```
 
+### Step 4: NoisePrivateKey Class
+
+Custom wrapper for X25519 private keys used in Noise, adds to_bytes for serialization and public_key/get_public_key methods. It's a thin layer to fit libp2p's expectations without reinventing crypto wheels.
+
+```python
 class NoisePrivateKey:
     def __init__(self, key):
         self._key = key
@@ -361,94 +99,31 @@ class NoisePrivateKey:
     
     def get_public_key(self):
         return self.public_key()
+```
 
+### Step 5: NoisePublicKey Class
+
+Companion to the private key: wraps the public X25519 key and exposes to_bytes for raw export. Simple and focused pairs perfectly with the private side for full keypair handling.
+
+```python
 class NoisePublicKey:
     def __init__(self, key):
         self._key = key
     
     def to_bytes(self):
         return self._key.public_bytes_raw()
+```
 
-def parse_duration(duration_str):
-    """Parse duration string like '20s', '5m', '1h' to seconds"""
-    if not duration_str:
-        return 20.0  # default
-    
-    # Remove whitespace
-    duration_str = duration_str.strip()
-    
-    # Try to parse as plain number first
-    try:
-        return float(duration_str)
-    except ValueError:
-        pass
-    
-    # Parse with unit suffix
-    match = re.match(r'^(\d+(?:\.\d+)?)\s*([smh]?)$', duration_str.lower())
-    if not match:
-        raise ValueError(f"Invalid duration format: {duration_str}")
-    
-    value, unit = match.groups()
-    value = float(value)
-    
-    if unit == 's' or unit == '':
-        return value
-    elif unit == 'm':
-        return value * 60
-    elif unit == 'h':
-        return value * 3600
-    else:
-        raise ValueError(f"Unknown time unit: {unit}")
+### Step 6: Create Secure Host Function
 
-async def handle_ping(stream: INetStream) -> None:
-    """Handle incoming ping requests"""
-    try:
-        while True:
-            start_time = time.time()
-            data = await stream.read(PING_LENGTH)
-            
-            if not data:
-                break
-            
-            await stream.write(data)
-            rtt_ms = (time.time() - start_time) * 1000
-            print(f"ping,{stream.muxed_conn.peer_id},{int(rtt_ms)} ms")
-            
-    except Exception as e:
-        print(f"error,Ping error: {e}")
-    finally:
-        try:
-            await stream.close()
-        except:
-            pass
+This spins up a libp2p host with explicit security: generates RSA for identity, X25519 for Noise, builds the Noise transport, and wires in Noise security + Yamux muxing options. Returns a ready-to-rock host explicit config ensures encrypted, multiplexed TCP streams.
 
-async def send_ping(stream: INetStream):
-    """Send ping to remote peer"""
-    try:
-        payload = b"\x01" * PING_LENGTH
-        start_time = time.time()
-        
-        await stream.write(payload)
-        
-        with trio.fail_after(5):
-            response = await stream.read(PING_LENGTH)
-        
-        if response == payload:
-            rtt_ms = (time.time() - start_time) * 1000
-            print(f"ping,{stream.muxed_conn.peer_id},{int(rtt_ms)} ms")
-        else:
-            print(f"error,Ping response mismatch")
-            
-    except Exception as e:
-        print(f"error,Ping failed: {e}")
-    finally:
-        try:
-            await stream.close()
-        except:
-            pass
-
+```python
 def create_secure_host():
-    """Create a libp2p host with Noise encryption and Yamux multiplexing"""
+    """
+    Create a libp2p host with explicit Noise encryption and Yamux multiplexing
+    over TCP.
+    """
     # Generate RSA keypair for libp2p identity
     key_pair = generate_new_rsa_identity()
     
@@ -459,7 +134,7 @@ def create_secure_host():
     # Create Noise transport
     noise_transport = NoiseTransport(key_pair, noise_privkey=noise_privkey)
     
-    # Configure security and multiplexing
+    # Configure security (Noise) and multiplexing (Yamux)
     sec_opt = {TProtocol("/noise"): noise_transport}
     muxer_opt = {TProtocol(YAMUX_PROTOCOL_ID): Yamux}
     
@@ -468,116 +143,196 @@ def create_secure_host():
         sec_opt=sec_opt,
         muxer_opt=muxer_opt
     )
+```
 
+### Step 7: Server-Side Ping Handler
 
-async def main():
-    print("Starting Universal Connectivity Application...")
-    
-    # Use the create_secure_host function instead of duplicating code
-    host = create_secure_host()
-    peer_id = host.get_id()
-    print(f"Local peer id: {peer_id}")
-    
-    # Set ping handler
-    host.set_stream_handler(PING_PROTOCOL_ID, handle_ping)
-    
-    # Start host
-    listen_addr = Multiaddr.Multiaddr("/ip4/0.0.0.0/tcp/0")
-    
-    async with host.run(listen_addrs=[listen_addr]):
-        # Print listening addresses
-        addrs = host.get_addrs()
-        print(f"Listening on:")
-        for addr in addrs:
-            print(f"  {addr}")
+Async handler for incoming ping streams: reads a fixed-length payload, echoes it back if valid, logs the exchange, and closes the stream. Catches errors with reset/close—handles one ping per stream, no loops, keeping it lightweight for the server.
+
+```python
+async def handle_ping(stream: INetStream) -> None:
+    """
+    Server-side ping handler: echoes data back.
+    This handles ONE ping per stream, as the client opens a new stream per ping.
+    REMOVED the `while True:` loop.
+    """
+    peer_id = stream.muxed_conn.peer_id
+    try:
+        payload = await stream.read(PING_LENGTH)
         
-        # Connect to remote peers
-        remote_peers = os.getenv("REMOTE_PEERS", "")
-        
-        if remote_peers:
-            print(f"Connecting to remote peers: {remote_peers}")
-            remote_addrs = [
-                Multiaddr.Multiaddr(addr.strip()) for addr in remote_peers.split(",")
-                if addr.strip()
-            ]
-            
-            async with trio.open_nursery() as nursery:
-                for addr in remote_addrs:
-                    try:
-                        info = info_from_p2p_addr(addr)
-                        await host.connect(info)
-                        print(f"connected,{info.peer_id},{addr}")
-                        
-                        # Open ping stream
-                        stream = await host.new_stream(info.peer_id, [PING_PROTOCOL_ID])
-                        nursery.start_soon(send_ping, stream)
-                        
-                    except Exception as e:
-                        print(f"error,Failed to connect to {addr}: {e}")
-                
-                # Wait for timeout - now properly parsing duration
-                timeout = parse_duration(os.getenv("TIMEOUT_DURATION", "20"))
-                print(f"Running for {timeout} seconds...")
-                with trio.move_on_after(timeout):
-                    await trio.sleep_forever()
+        if payload is not None and len(payload) > 0:
+            logging.info(f"received ping from {peer_id}")
+            await stream.write(payload)
+            logging.info(f"responded with pong to {peer_id}")
         else:
-            # Just wait for incoming connections
-            timeout = parse_duration(os.getenv("TIMEOUT_DURATION", "20"))
-            print(f"No remote peers configured. Waiting for incoming connections for {timeout} seconds...")
-            with trio.move_on_after(timeout):
-                await trio.sleep_forever()
-        
-        print("Application finished.")
+            # Stream closed unexpectedly
+            logging.info(f"Stream from {peer_id} closed before ping received")
 
+    except Exception as e:
+        # Log the specific exception
+        logging.warning(f"Error handling ping from {peer_id}: {repr(e)}")
+        await stream.reset()
+    finally:
+        # A single ping is done, close the stream from the server side too
+        await stream.close()
+        logging.info(f"Closed ping stream from {peer_id}")
+```
+
+### Step 8: Client-Side Send Ping Function
+
+Client's ping sender: crafts a dummy payload, times the write/read roundtrip, measures RTT in ms, and prints success/failure. Times out gracefully or catches errors, closes stream after, precise for one-off pings.
+
+```python
+async def send_ping(stream: INetStream) -> None:
+    """Client-side: sends one ping and calculates RTT."""
+    try:
+        payload = b"\x01" * PING_LENGTH
+        peer_id = stream.muxed_conn.peer_id
+        
+        logging.info(f"sending ping to {peer_id}")
+
+        # 2. Handle Ping Events: Measure RTT
+        start_time = trio.current_time()
+        await stream.write(payload)
+
+        with trio.fail_after(RESP_TIMEOUT):
+            response = await stream.read(PING_LENGTH)
+        
+        end_time = trio.current_time()
+        rtt_ms = (end_time - start_time) * 1000
+
+        if response == payload:
+            print(f"ping: Success from {peer_id}, RTT = {rtt_ms:.2f} ms")
+        else:
+            print(f"ping: Failed, response mismatch from {peer_id}")
+
+    except trio.TooSlowError:
+        print(f"ping: Timeout to {stream.muxed_conn.peer_id} after {RESP_TIMEOUT}s")
+    except Exception as e:
+        print(f"ping: Error occurred : {repr(e)}")
+    finally:
+        await stream.close()
+```
+
+### Step 9: Ping Looper Function
+
+Client's loop: every 1s, opens a fresh stream to the peer, sends a ping via send_ping, and handles failures with reset. Infinite async loop meets the 1s interval goal without blocking the host.
+
+```python
+async def ping_looper(host, peer_id, protocols):
+    """
+    Client-side: Continuously pings a peer every 1 second.
+    This fulfills Goal 1: 1-second interval
+    """
+    while True:
+        stream = None
+        try:
+            stream = await host.new_stream(peer_id, protocols)
+            await send_ping(stream)
+        except Exception as e:
+            print(f"Failed to open stream or ping: {repr(e)}")
+            if stream:
+                await stream.reset()
+        
+        # Wait 1 second before the next ping
+        await trio.sleep(1.0)
+```
+
+### Step 10: Run Function
+
+Core async runner: finds a free port if needed, sets listen addrs, creates secure host, and runs it in context. Starts peerstore cleanup. If no dest (server mode), sets ping handler and prints addrs. If dest (client), connects, then spawns ping looper. Sleeps forever to keep alive, handles both modes cleanly.
+
+```python
+async def run(port: int, destination: str) -> None:
+    from libp2p.utils.address_validation import (
+        find_free_port,
+        get_available_interfaces,
+        get_optimal_binding_address,
+    )
+
+    if port <= 0:
+        port = find_free_port()
+
+    listen_addrs = get_available_interfaces(port)
+    host = create_secure_host()
+
+    async with host.run(listen_addrs=listen_addrs), trio.open_nursery() as nursery:
+        # Start the peer-store cleanup task
+        nursery.start_soon(host.get_peerstore().start_cleanup_task, 60)
+
+        if not destination:
+            host.set_stream_handler(PING_PROTOCOL_ID, handle_ping)
+
+            all_addrs = host.get_addrs()
+            print("Security: Noise encryption enabled")
+            print("Multiplexing: Yamux enabled")
+            print("Listener ready, listening on:\n")
+            for addr in all_addrs:
+                print(f"{addr}")
+
+            print("\nWaiting for incoming connection...")
+
+        else:
+            maddr = multiaddr.Multiaddr(destination)
+            info = info_from_p2p_addr(maddr)
+            await host.connect(info)
+            print(f"Connected to {info.peer_id}")
+            
+            print("Starting 1-second ping interval...")
+            nursery.start_soon(ping_looper, host, info.peer_id, [PING_PROTOCOL_ID])
+
+        # Keep both client and server alive
+        await trio.sleep_forever()
+```
+
+### Step 11: Main Function
+
+CLI entry: sets up argparse for port (default 8000) and optional dest multiaddr, with a helpful description. Runs the async run func via trio, catches Ctrl+C for a clean exit.
+
+```python
+def main() -> None:
+    description = """
+    This program demonstrates a simple p2p ping application using libp2p
+    with a 1-second interval and RTT measurement.
+    """
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("-p", "--port", default=8000, type=int, help="source port number")
+    parser.add_argument(
+        "-d",
+        "--destination",
+        type=str,
+        help="destination multiaddr string",
+    )
+    args = parser.parse_args()
+
+    try:
+        trio.run(run, *(args.port, args.destination))
+    except KeyboardInterrupt:
+        print("\nGoodbye!")
+```
+
+### Step 12: Entry Point
+
+Guard the main() call—runs if direct execution, skips on import. Keeps it module-friendly.
+
+```python
 if __name__ == "__main__":
-    trio.run(main)
+    main()
 ```
 
 ## Testing Your Implementation
 
-### Linux/Mac Commands:
-
 #### Test Basic Ping:
 ```bash
 # Terminal 1 - Start server
-python ping_basic.py -p 8000
+python main.py -p 8000
 
 # Terminal 2 - Connect as client (replace PEER_ID with actual ID from server)
-python ping_basic.py -d /ip4/127.0.0.1/tcp/8000/p2p/PEER_ID
-```
-
-#### Test Advanced Ping:
-```bash
-# Terminal 1 - Start secure server
-python ping_advanced.py -p 8001
-
-# Terminal 2 - Connect as secure client
-python ping_advanced.py -d /ip4/127.0.0.1/tcp/8001/p2p/PEER_ID
-```
-
-### Windows Commands:
-
-#### Test Basic Ping:
-```cmd
-REM Terminal 1 - Start server
-python ping_basic.py -p 8000
-
-REM Terminal 2 - Connect as client (replace PEER_ID with actual ID from server)
-python ping_basic.py -d /ip4/127.0.0.1/tcp/8000/p2p/PEER_ID
-```
-
-#### Test Advanced Ping:
-```cmd
-REM Terminal 1 - Start secure server
-python ping_advanced.py -p 8001
-
-REM Terminal 2 - Connect as secure client
-python ping_advanced.py -d /ip4/127.0.0.1/tcp/8001/p2p/PEER_ID
+python main.py -d /ip4/127.0.0.1/tcp/8000/p2p/PEER_ID
 ```
 
 ### Docker Workshop Commands:
 
-#### Linux/Mac:
 ```bash
 export PROJECT_ROOT=/path/to/workshop
 export LESSON_PATH=uc-workshop/en/py/03-ping-checkpoint
@@ -595,24 +350,6 @@ docker compose --project-name workshop up --build --remove-orphans
 python check.py
 ```
 
-#### Windows:
-```cmd
-set PROJECT_ROOT=C:\path\to\workshop
-set LESSON_PATH=uc-workshop\en\py\03-ping-checkpoint
-cd %PROJECT_ROOT%\%LESSON_PATH%
-
-REM Clean up
-docker rm -f workshop-lesson ucw-checker-03-ping-checkpoint
-docker network rm -f workshop-net
-
-REM Run workshop
-docker network create --driver bridge --subnet 172.16.16.0/24 workshop-net
-docker compose --project-name workshop up --build --remove-orphans
-
-REM Check results
-python check.py
-```
-
 ## Success Criteria
 
 Your implementation should:
@@ -622,6 +359,240 @@ Your implementation should:
 - ✅ Send ping requests and measure round-trip times
 - ✅ Output logs in the expected format for validation
 - ✅ Work with both basic and secure (Noise + Yamux) configurations
+
+## Hints
+
+## Hint - Complete Solution
+
+Here's the complete working solution:
+
+```python
+import argparse
+import logging
+import time
+
+import multiaddr
+import trio
+
+from libp2p import (
+    new_host,
+    generate_new_rsa_identity,
+)
+from libp2p.custom_types import (
+    TProtocol,
+)
+from libp2p.network.stream.net_stream import (
+    INetStream,
+)
+from libp2p.peer.peerinfo import (
+    info_from_p2p_addr,
+)
+
+from libp2p.security.noise.transport import Transport as NoiseTransport
+from libp2p.stream_muxer.yamux.yamux import Yamux, PROTOCOL_ID as YAMUX_PROTOCOL_ID
+from cryptography.hazmat.primitives.asymmetric import x25519
+
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
+logging.getLogger().setLevel(logging.INFO)
+
+
+PING_PROTOCOL_ID = TProtocol("/ipfs/ping/1.0.0")
+PING_LENGTH = 32
+RESP_TIMEOUT = 5
+
+class NoisePrivateKey:
+    def __init__(self, key):
+        self._key = key
+    
+    def to_bytes(self):
+        return self._key.private_bytes_raw()
+    
+    def public_key(self):
+        return NoisePublicKey(self._key.public_key())
+    
+    def get_public_key(self):
+        return self.public_key()
+
+class NoisePublicKey:
+    def __init__(self, key):
+        self._key = key
+    
+    def to_bytes(self):
+        return self._key.public_bytes_raw()
+
+def create_secure_host():
+    """
+    Create a libp2p host with explicit Noise encryption and Yamux multiplexing
+    over TCP.
+    """
+    # Generate RSA keypair for libp2p identity
+    key_pair = generate_new_rsa_identity()
+    
+    # Generate X25519 keypair for Noise protocol
+    x25519_private_key = x25519.X25519PrivateKey.generate()
+    noise_privkey = NoisePrivateKey(x25519_private_key)
+    
+    # Create Noise transport
+    noise_transport = NoiseTransport(key_pair, noise_privkey=noise_privkey)
+    
+    # Configure security (Noise) and multiplexing (Yamux)
+    sec_opt = {TProtocol("/noise"): noise_transport}
+    muxer_opt = {TProtocol(YAMUX_PROTOCOL_ID): Yamux}
+    
+    return new_host(
+        key_pair=key_pair,
+        sec_opt=sec_opt,
+        muxer_opt=muxer_opt
+    )
+
+
+async def handle_ping(stream: INetStream) -> None:
+    """
+    Server-side ping handler: echoes data back.
+    This handles ONE ping per stream, as the client opens a new stream per ping.
+    REMOVED the `while True:` loop.
+    """
+    peer_id = stream.muxed_conn.peer_id
+    try:
+        payload = await stream.read(PING_LENGTH)
+        
+        if payload is not None and len(payload) > 0:
+            logging.info(f"received ping from {peer_id}")
+            await stream.write(payload)
+            logging.info(f"responded with pong to {peer_id}")
+        else:
+            # Stream closed unexpectedly
+            logging.info(f"Stream from {peer_id} closed before ping received")
+
+    except Exception as e:
+        # Log the specific exception
+        logging.warning(f"Error handling ping from {peer_id}: {repr(e)}")
+        await stream.reset()
+    finally:
+        # A single ping is done, close the stream from the server side too
+        await stream.close()
+        logging.info(f"Closed ping stream from {peer_id}")
+
+
+async def send_ping(stream: INetStream) -> None:
+    """Client-side: sends one ping and calculates RTT."""
+    try:
+        payload = b"\x01" * PING_LENGTH
+        peer_id = stream.muxed_conn.peer_id
+        
+        logging.info(f"sending ping to {peer_id}")
+
+        # 2. Handle Ping Events: Measure RTT
+        start_time = trio.current_time()
+        await stream.write(payload)
+
+        with trio.fail_after(RESP_TIMEOUT):
+            response = await stream.read(PING_LENGTH)
+        
+        end_time = trio.current_time()
+        rtt_ms = (end_time - start_time) * 1000
+
+        if response == payload:
+            print(f"ping: Success from {peer_id}, RTT = {rtt_ms:.2f} ms")
+        else:
+            print(f"ping: Failed, response mismatch from {peer_id}")
+
+    except trio.TooSlowError:
+        print(f"ping: Timeout to {stream.muxed_conn.peer_id} after {RESP_TIMEOUT}s")
+    except Exception as e:
+        print(f"ping: Error occurred : {repr(e)}")
+    finally:
+        await stream.close()
+
+
+async def ping_looper(host, peer_id, protocols):
+    """
+    Client-side: Continuously pings a peer every 1 second.
+    This fulfills Goal 1: 1-second interval
+    """
+    while True:
+        stream = None
+        try:
+            stream = await host.new_stream(peer_id, protocols)
+            await send_ping(stream)
+        except Exception as e:
+            print(f"Failed to open stream or ping: {repr(e)}")
+            if stream:
+                await stream.reset()
+        
+        # Wait 1 second before the next ping
+        await trio.sleep(1.0)
+
+
+async def run(port: int, destination: str) -> None:
+    from libp2p.utils.address_validation import (
+        find_free_port,
+        get_available_interfaces,
+        get_optimal_binding_address,
+    )
+
+    if port <= 0:
+        port = find_free_port()
+
+    listen_addrs = get_available_interfaces(port)
+    host = create_secure_host()
+
+    async with host.run(listen_addrs=listen_addrs), trio.open_nursery() as nursery:
+        # Start the peer-store cleanup task
+        nursery.start_soon(host.get_peerstore().start_cleanup_task, 60)
+
+        if not destination:
+            host.set_stream_handler(PING_PROTOCOL_ID, handle_ping)
+
+            all_addrs = host.get_addrs()
+            print("Security: Noise encryption enabled")
+            print("Multiplexing: Yamux enabled")
+            print("Listener ready, listening on:\n")
+            for addr in all_addrs:
+                print(f"{addr}")
+
+            print("\nWaiting for incoming connection...")
+
+        else:
+            maddr = multiaddr.Multiaddr(destination)
+            info = info_from_p2p_addr(maddr)
+            await host.connect(info)
+            print(f"Connected to {info.peer_id}")
+            
+            print("Starting 1-second ping interval...")
+            nursery.start_soon(ping_looper, host, info.peer_id, [PING_PROTOCOL_ID])
+
+        # Keep both client and server alive
+        await trio.sleep_forever()
+
+
+def main() -> None:
+    description = """
+    This program demonstrates a simple p2p ping application using libp2p
+    with a 1-second interval and RTT measurement.
+    """
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("-p", "--port", default=8000, type=int, help="source port number")
+    parser.add_argument(
+        "-d",
+        "--destination",
+        type=str,
+        help="destination multiaddr string",
+    )
+    args = parser.parse_args()
+
+    try:
+        trio.run(run, *(args.port, args.destination))
+    except KeyboardInterrupt:
+        print("\nGoodbye!")
+
+
+if __name__ == "__main__":
+    main()
+```
 
 ## Troubleshooting
 
