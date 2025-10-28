@@ -47,12 +47,14 @@ Creates a basic libp2p host with cryptographic identity.
 ```
 
 **What’s happening here?**
+
 - The `#!/usr/bin/env python3` line is like a note to your computer saying, “Run this script with Python 3.” It’s a standard way to make the script executable on Unix-like systems (e.g., Linux or macOS).
 - The docstring (`"""..."""`) is a quick summary of what the script does: it’s Lesson 1 in learning how to build a `libp2p` host (a node in a P2P network) and give it a unique identity using cryptography.
 
 **Why?** The shebang ensures the script runs with the right Python version, and the docstring is like a label on a jar, telling you what’s inside.
 
 ### 2. Imports
+
 ```python
 import trio
 from cryptography.hazmat.primitives import hashes
@@ -75,6 +77,7 @@ This is like grabbing the ingredients for your recipe. The script pulls in:
 **Why?** These libraries provide the tools to create a secure identity, manage async operations, and format the peer ID.
 
 ### 3. LibP2PHost Class
+
 ```python
 class LibP2PHost:
     """Basic libp2p Host implementation"""
@@ -100,6 +103,7 @@ class LibP2PHost:
 ```
 
 **What’s happening here?**
+
 This is like building a little control center for your P2P node, called `LibP2PHost`. Here’s what it does:
 - **Initialization (`__init__`)**: When you create a host, you give it a private key (your secret) and a peer ID (your public name). It also sets a flag (`is_running`) to `False`, meaning the host isn’t active yet.
 - **Start (`start`)**: Flips the `is_running` flag to `True` and prints a message saying the host is up with its peer ID. It’s marked `async` because it might do network stuff later (though here it’s simple).
@@ -109,6 +113,7 @@ This is like building a little control center for your P2P node, called `LibP2PH
 **Why?** This class is like the blueprint for your P2P node. It’s basic for now (just starting, stopping, and storing an ID), but it’s a foundation you can build on to add networking features.
 
 ### 4. Main Async Function
+
 ```python
 async def main():
     print("Starting Universal Connectivity Application...")
@@ -143,6 +148,7 @@ async def main():
 ```
 
 **What’s happening here?**
+
 This is the heart of the program, where everything comes together. It’s marked `async` because it uses `trio` for asynchronous operations. Here’s the step-by-step:
 1. **Print a startup message**: Just a friendly “Hey, we’re starting!”
 2. **Generate a keypair**: Uses Ed25519 to create a private key (your secret) and a public key (what you share). Think of it like creating a lock and key: the private key is yours, and the public key is what others use to verify you.
@@ -156,17 +162,20 @@ This is the heart of the program, where everything comes together. It’s marked
 
 
 ### 5. Entry Point
+
 ```python
 if __name__ == "__main__":
     trio.run(main)
 ```
 
 **What’s happening here?**
+
 This is the standard way to say, “If this script is run directly (not imported as a module), start the `main` function.” The `trio.run(main)` part tells `trio` to handle the asynchronous `main` function, kicking off the whole program.
 
 **Why?** It’s the “on” switch for the app, ensuring everything starts properly.
 
 ### Big Picture
+
 This script is like a “Hello, World!” for P2P networking with `libp2p`. It:
 - Creates a unique identity for your node using Ed25519 cryptography (a private-public keypair).
 - Turns the public key into a compact, unique peer ID using SHA-256 and Base58.
@@ -175,7 +184,9 @@ This script is like a “Hello, World!” for P2P networking with `libp2p`. It:
 
 Think of it as setting up a profile for your computer in a decentralized network. It’s not connecting to other peers or sending messages yet, but it’s got the basics: a secure ID and a way to say “I’m here!” This is a starting point you could build on to add features like connecting to other nodes or sending data, as seen in the more complex code you shared earlier.
 
-## Complete Solution Structure
+## Hints
+
+## Hint - Complete Solution
 
 Your complete `app/main.py` should look like this:
 
@@ -266,8 +277,6 @@ Host started with PeerId: 8QmatENdmjQQqwGqkAdTyKMjwTtJJdqCfZ6jAFkchTw9bKS4
 ```
 
 Press Ctrl+C to stop the application.
-
-## Hint Blocks
 
 ### 🔑 Understanding Cryptographic Keys
 
