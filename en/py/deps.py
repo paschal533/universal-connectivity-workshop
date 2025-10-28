@@ -19,7 +19,7 @@ def check_python_version():
         print(f"! Python {min_version} or higher is required. Current version: {current_version}")
         return False
     
-    print(f"✓ Python {current_version} is installed")
+    print(f"v Python {current_version} is installed")
     return True
 
 def check_pip():
@@ -27,7 +27,7 @@ def check_pip():
     try:
         import pip
         pip_version = pip.__version__
-        print(f"✓ pip {pip_version} is installed")
+        print(f"v pip {pip_version} is installed")
         return True
     except ImportError:
         print("! pip is not installed")
@@ -39,14 +39,14 @@ def check_package(package_name, min_version=None):
         if min_version:
             pkg_resources.require(f"{package_name}>={min_version}")
             installed_version = pkg_resources.get_distribution(package_name).version
-            print(f"✓ {package_name} {installed_version} is installed")
+            print(f"v {package_name} {installed_version} is installed")
         else:
             importlib.import_module(package_name)
             try:
                 installed_version = pkg_resources.get_distribution(package_name).version
-                print(f"✓ {package_name} {installed_version} is installed")
+                print(f"v {package_name} {installed_version} is installed")
             except:
-                print(f"✓ {package_name} is installed")
+                print(f"v {package_name} is installed")
         return True
     except (ImportError, pkg_resources.DistributionNotFound, pkg_resources.VersionConflict):
         if min_version:
@@ -59,9 +59,9 @@ def check_command(command, description=None):
     """Check if a system command is available"""
     try:
         result = subprocess.run([command, "--version"], 
-                              capture_output=True, text=True, timeout=5)
+                                capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            print(f"✓ {command} is installed")
+            print(f"v {command} is installed")
             return True
         else:
             print(f"! {command} is not available")
@@ -77,7 +77,7 @@ def install_instructions():
     print("INSTALLATION INSTRUCTIONS")
     print("="*60)
     print("\nTo install the required Python packages, run:")
-    print("pip install trio aiohttp multiaddr protobuf cryptography")
+    print("pip install trio multiaddr protobuf")
     print("\nAlternatively, install from source:")
     print("git clone https://github.com/libp2p/py-libp2p.git")
     print("cd py-libp2p")
@@ -102,11 +102,9 @@ def main():
     
     # Check core Python packages
     required_packages = [
-        ("trio", None),  # Built-in, but check if importable
-        ("aiohttp", "3.8.0"),
+        ("trio", None),
         ("multiaddr", None),
         ("protobuf", "3.20.0"),
-        ("cryptography", "3.4.0"),
     ]
     
     print("\nChecking required Python packages:")
@@ -114,30 +112,19 @@ def main():
         if not check_package(package, min_ver):
             all_dependencies_met = False
     
-    # Check optional but recommended packages
-    print("\nChecking optional packages:")
-    optional_packages = [
-        ("pytest", None),
-        ("black", None),
-        ("mypy", None),
-    ]
-    
-    for package, min_ver in optional_packages:
-        check_package(package, min_ver)  # Don't fail on optional packages
-    
     # Check system tools
     print("\nChecking system tools:")
     if not check_command("git", "version control"):
         print("  (Git is recommended for cloning py-libp2p source)")
     
-    check_command("docker", "containerization")  # Optional
+    check_command("docker", "containerization")
     
     print("\n" + "="*70)
     if all_dependencies_met:
-        print("✅ All required dependencies are met!")
+        print("v All required dependencies are met!")
         print("You're ready to start the workshop!")
     else:
-        print("❌ Some required dependencies are missing.")
+        print("! Some required dependencies are missing.")
         install_instructions()
         sys.exit(1)
 
