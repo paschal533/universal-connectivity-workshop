@@ -61,23 +61,14 @@ Extend your ping application to support both TCP and QUIC transports:
 
 ## Step-by-Step Instructions
 
-### Step 1: Update Dependencies
+### Step 1: Handle Imports
 
-Add QUIC support to your requirements.txt:
-
-```txt
-libp2p>=0.2.9
-trio>=0.22.0
-multiaddr>=0.0.9
-```
-
-The py-libp2p package includes QUIC transport support by default in recent versions.
-
-### Step 2: Import Required Modules
-
-Update your imports to include QUIC transport:
+We're loading up the basics for logging, system ops, timing, async with Trio, multiaddrs for addressing, and libp2p core for hosts and identities. Then there's a sneaky try-except to optionally import QUIC transport, sets a flag if it's available, otherwise bails gracefully with a print. Keeps things modular without hard failures.
 
 ```python
+import logging
+import sys
+
 import os
 import time
 
@@ -97,12 +88,31 @@ except ImportError as e:
     print(f"QUIC transport not available: {e}")
     QUIC_AVAILABLE = False
     QUICTransport = None
+```
 
+### Step 2: Configure Logging
+
+Setting the root logger to WARNING to keep output chill, then dialing back specific noisy loggers like multiaddr and libp2p.
+
+```python
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
+```
+
+### Step 3: Define Ping Constants
+
+Quick globals for the ping protocol ID (standard IPFS ping) and payload length (32 bytes). These make the pings consistent and easy to tweak without hunting through code.
+
+```python
 PING_PROTOCOL_ID = TProtocol("/ipfs/ping/1.0.0")
 PING_LENGTH = 32
 ```
 
-### Step 3: Class Definition and Initialization
+### Step 4: Define the QUICPingApp Class
+
+Our main player: a class for the QUIC-based ping app. Init sets up placeholders for the host, peer ID, and a running flag, simple state tracking to keep things humming.
 
 ```python
 class QUICPingApp:
@@ -116,9 +126,9 @@ class QUICPingApp:
         self.running = True
 ```
 
-This block defines the `QUICPingApp` class, which encapsulates the logic for a libp2p application that uses QUIC transport to implement a ping functionality. The class includes a docstring describing its purpose. In the `__init__` method, three instance variables are initialized: `self.quic_host` is set to `None` and will later store the libp2p host object using QUIC transport, `self.peer_id` is set to None and will store the peer ID of the host, and `self.running` is set to `True` to control the application's main loop, allowing it to be stopped gracefully.
+### Step 5: Create QUIC Host Method
 
-### Step 4: Creating a QUIC Host
+This async method spins up a QUIC enabled host if available: generates an RSA keypair, builds the QUIC transport, swaps it into the swarm, and wires it up. Bails early if QUIC's a no-go, with a nice success print or traceback on fail.
 
 ```python
     async def create_quic_host(self):
@@ -134,11 +144,12 @@ This block defines the `QUICPingApp` class, which encapsulates the logic for a l
             # Create QUIC transport
             quic_transport = QUICTransport(key_pair.private_key)
             
-            # Create a basic host first
             host = new_host(key_pair=key_pair)
+            
             swarm = host.get_network()
             swarm.transport = quic_transport
             
+            # Set up QUIC transport with the swarm if method exists
             if hasattr(quic_transport, 'set_swarm'):
                 quic_transport.set_swarm(swarm)
             
@@ -152,9 +163,9 @@ This block defines the `QUICPingApp` class, which encapsulates the logic for a l
             return None
 ```
 
-This block defines the `create_quic_host method`, an asynchronous function responsible for setting up a libp2p host with QUIC transport. The method first checks if `QUIC_AVAILABLE` is `False`, printing an error message and returning `None` if QUIC is not supported. If QUIC is available, the method proceeds within a try-except block to handle potential errors. It generates a new RSA key pair using `generate_new_rsa_identity` for secure communication. A `QUICTransport` object is created with the private key from the key pair. A basic libp2p host is then created using `new_host` with the generated key pair. The method retrieves the host's network swarm and replaces its default transport with the `QUICTransport` object. If the `QUICTransport` object has a `set_swarm` method, it is called to associate the transport with the swarm, ensuring proper configuration. If the host creation is successful, a success message is printed, and the host object is returned. If an exception occurs, an error message is printed along with a stack trace, and `None` is returned.
+### Step 6: Handle Incoming Ping Method
 
-### Step 5: Handling Incoming Ping Requests
+Async handler for pings over a stream: loops reading 32-byte payloads, echoes them back, times the RTT, and logs it with the peer ID. Breaks on empty data, closes gracefully on errors, keeps the connection tidy.
 
 ```python
     async def handle_ping(self, stream: INetStream) -> None:
@@ -181,9 +192,9 @@ This block defines the `create_quic_host method`, an asynchronous function respo
                 pass
 ```
 
-This block defines the `handle_ping` method, an asynchronous function that processes incoming ping requests over a QUIC stream. The method runs in a loop to continuously handle incoming data. It records the start time using `time.time()` and reads `PING_LENGTH` bytes (32 bytes) from the provided `INetStream` stream. If no data is received (indicating the stream has closed), the loop breaks. Otherwise, the received data is written back to the stream as a response, effectively echoing the ping. The round-trip time (RTT) is calculated by subtracting the start time from the current time and converting to milliseconds. The peer ID is extracted from the stream's multiplexed connection, and a message is printed showing the peer ID and the RTT. If an exception occurs, an error message is printed. In the `finally` block, the method attempts to close the stream to clean up resources, ignoring any errors during closure.
+### Step 7: Send Ping Method
 
-### Step 6: Sending Pings to Remote Peers
+The outbound ping loop: crafts a 32-byte payload, writes it, reads the echo with a 5s timeout, checks for match, and logs RTT or mismatch/timeout. Sleeps 1s between rounds, respects the running flag, and cleans up on exit.
 
 ```python
     async def send_ping(self, stream: INetStream):
@@ -219,9 +230,9 @@ This block defines the `handle_ping` method, an asynchronous function that proce
                 pass
 ```
 
-This block defines the `send_ping` method, an asynchronous function that sends ping messages to a remote peer over a QUIC stream and measures the RTT. A payload of 32 bytes (all 0x01) is created. The peer ID is obtained from the stream's multiplexed connection. The method runs in a loop as long as `self.running` is `True`. In each iteration, it records the start time, writes the payload to the stream, and waits for a response with a 5-second timeout enforced by `trio.fail_after`. If a response is received, it checks if it matches the sent payload. If it matches, the RTT is calculated and printed; otherwise, a mismatch error is printed. The method waits for 1 second before sending the next ping. If a timeout occurs (`trio.TooSlowError`), a timeout message is printed. Other exceptions result in an error message with the peer ID. The `finally` block ensures the stream is closed, ignoring any closure errors.
+### Step 8: Dial Peer Method
 
-### Step 7: Dialing a Remote Peer
+Async dialer: parses the multiaddr, connects to the peer info, opens a ping stream on the protocol, and kicks off the send_ping loop. Logs the journey with emojis for that extra flair on success or fail.
 
 ```python
     async def dial_peer(self, addr_str: str):
@@ -246,9 +257,9 @@ This block defines the `send_ping` method, an asynchronous function that sends p
             print(f"❌ Failed to connect via QUIC to {addr_str}: {e}")
 ```
 
-This block defines the `dial_peer` method, an asynchronous function that establishes a connection to a remote peer using QUIC. It takes a multi-address string (`addr_str`) and converts it to a `Multiaddr` object. The method prints a message indicating it is dialing the peer. It parses the peer information from the address using `info_from_p2p_addr` and connects to the peer using the `quic_host.connect` method. Upon successful connection, it prints a confirmation message with the peer ID. A new stream is opened to the peer using the ``PING_PROTOCOL_ID`, and the `send_ping` method is called to start sending pings. If any exception occurs during this process, an error message is printed with the address and the error details.
+### Step 9: Run Host Method
 
-### Step 8: Running the QUIC Host
+Boots the host: sets the ping handler, runs it async with a QUIC listen addr (dynamic UDP port), prints listening addrs, then sleeps forever to keep it alive. Catches errors and re-raises for upstream handling.
 
 ```python
     async def run_host(self, host, listen_addr: Multiaddr):
@@ -271,9 +282,10 @@ This block defines the `dial_peer` method, an asynchronous function that establi
             print(f"❌ QUIC host failed: {e}")
             raise
 ```
-This block defines the `run_host` method, an asynchronous function that starts the QUIC host and sets it up to listen for incoming connections. The method configures the host to use the `handle_ping` method for streams with the `PING_PROTOCOL_ID`. It then starts the host using the provided `listen_addr` (a Multiaddr object) within an async with block, which ensures proper resource cleanup. The method retrieves and prints the addresses the host is listening on. The `trio.sleep_forever()` call keeps the host running indefinitely to handle incoming connections. If an exception occurs, an error message is printed, and the exception is re-raised to be handled by the caller.
 
-### Step 9: Printing Connection Command
+### Step 10: Print Connection Command Method
+
+Helper to spit out a copy-paste command for connecting from another terminal: filters QUIC addrs, tweaks localhost, and prints env-set/run instructions. Only if host's up. Otherwise, a polite error.
 
 ```python
     def print_connection_command(self):
@@ -291,9 +303,9 @@ This block defines the `run_host` method, an asynchronous function that starts t
         print("⏳ Waiting for incoming connections...")
 ```
 
-This block defines the `print_connection_command` method, which generates and prints a command that another instance of the application can use to connect to this host. If no `quic_host` exists, an error message is printed, and the method returns. Otherwise, it retrieves the host's listening addresses, filters for those using QUIC (containing "/quic"), and converts them to strings. Each address is modified to replace `0.0.0.0` with `127.0.0.1` for local testing. The method prints a command that sets the `REMOTE_PEERS` environment variable with the modified address and runs the `app/main.py` script. Finally, it prints a message indicating the host is waiting for connections.
+### Step 11: Main Run Method
 
-### Step 10: Main Application Loop
+The app's conductor: prints startup, creates the host (exits if fail), grabs peer ID, parses REMOTE_PEERS (QUIC-only), then uses a nursery to spawn host runner and dialers in parallel. If no remotes, prints connect command. Catches broad errors.
 
 ```python
     async def run(self):
@@ -346,9 +358,9 @@ This block defines the `print_connection_command` method, which generates and pr
             raise
 ```
 
-This block defines the `run` method, the main asynchronous entry point for the `QUICPingApp`. It starts by printing a message indicating the application is starting. If QUIC is not available, it prints an error and exits. It then attempts to create a QUIC host by calling `create_quic_host`. If the host creation fails, it prints an error and exits. The peer ID of the host is retrieved and printed. The method checks the `REMOTE_PEERS` environment variable for a comma-separated list of peer addresses, filtering for valid QUIC addresses. Using a trio nursery (a context for managing concurrent tasks), it starts the QUIC host with a listen address of `/ip4/0.0.0.0/udp/0/quic-v1`, which binds to all interfaces on a random UDP port using QUIC. After a 1-second delay to ensure the host starts, it checks if remote peers are specified. If so, it starts tasks to dial each peer; otherwise, it calls ``print_connection_command` to display connection instructions. Any exceptions are caught, printed, and re-raised.
+### Step 12: Main Entry Point Function
 
-### Step 11: Main Entry Point
+Async main: instantiates the app, runs it with try-except for interrupts and errors (with helpful QUIC troubleshooting tips on crash), and always prints a stop message. Keeps the shutdown user-friendly.
 
 ```python
 async def main():
@@ -371,15 +383,30 @@ async def main():
         print("3. Check QUIC configuration and network permissions")
     finally:
         print("🏁 Application stopped")
+```
 
+### Step 13: Script Runner
+
+Standard guard: if run directly, fire up Trio to execute main. Lets it import cleanly elsewhere if needed.
+
+```python
 if __name__ == "__main__":
     trio.run(main)
 ```
 
-This block defines the `main` asynchronous function, which serves as the application's entry point. It creates an instance of `QUICPingApp` and calls its `run` method. The method is wrapped in a try-except block to handle interruptions and errors. If a `KeyboardInterrupt` (Ctrl+C) occurs, it prints a shutdown message and sets `app.running` to `False` to stop any loops. For other exceptions, it prints an error message, provides an analysis suggesting that the `py-libp2p` library may have a single-transport architecture and unstable QUIC support, and offers solutions like enabling QUIC support, updating the library, or checking network permissions. The `finally` block prints a message indicating the application has stopped. The `if __name__ == "__main__":` clause ensures the `main` function is run using `trio.run` when the script is executed directly.
-
-
 ## Testing Your Implementation
+
+### Test QUIC Ping APP:
+
+```bash
+# Terminal 1 - Start server
+python main.py
+
+# Terminal 2 - Connect as client (replace PORT and PEER_ID with actual ID from server)
+$env:REMOTE_PEERS='/ip4/127.0.0.1/udp/<PORT>/quic-v1/p2p/<PEER_ID>'; python app/main.py
+```
+
+### Docker Workshop Commands:
 
 1. Set the environment variables:
    ```bash
@@ -422,13 +449,13 @@ Your implementation should:
 
 ## Hints
 
-### Hint - QUIC Multiaddress Format
+## Hint - QUIC Multiaddress Format
 
 QUIC multiaddresses use UDP instead of TCP and include the QUIC protocol after the port number.
 - TCP: `/ip4/127.0.0.1/tcp/9092`
 - QUIC: `/ip4/127.0.0.1/udp/9092/quic-v1`
 
-### Hint - Error Handling
+## Hint - Error Handling
 
 py-libp2p uses async/await patterns, so make sure to properly handle exceptions in async contexts:
 
@@ -439,11 +466,12 @@ except Exception as e:
     print(f"Connection failed: {e}")
 ```
 
-### Hint - Here is the complete code 
-
-py-libp2p hosts should be used with async context managers to ensure proper resource cleanup:
+## Hint - Here is the complete code 
 
 ```python
+import logging
+import sys
+
 import os
 import time
 
@@ -463,6 +491,11 @@ except ImportError as e:
     print(f"QUIC transport not available: {e}")
     QUIC_AVAILABLE = False
     QUICTransport = None
+
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
 
 PING_PROTOCOL_ID = TProtocol("/ipfs/ping/1.0.0")
 PING_LENGTH = 32
@@ -691,16 +724,6 @@ async def main():
 if __name__ == "__main__":
     trio.run(main)
 ```
-
-## Key Differences from Rust Implementation
-
-The Python implementation differs from Rust in several ways:
-
-1. **Host vs Swarm**: py-libp2p uses a `Host` abstraction instead of directly managing a `Swarm`
-2. **Async/Await**: Uses Python's async/await syntax instead of futures and streams
-3. **Context Managers**: Uses async context managers for resource management
-4. **Transport Registration**: Transports are passed to the host constructor
-5. **Connection Events**: Connection events are handled through the host's network interface
 
 ## What's Next?
 

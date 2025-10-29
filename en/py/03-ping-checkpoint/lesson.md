@@ -322,7 +322,8 @@ if __name__ == "__main__":
 
 ## Testing Your Implementation
 
-#### Test Basic Ping:
+### Test Basic Ping:
+
 ```bash
 # Terminal 1 - Start server
 python main.py -p 8000
