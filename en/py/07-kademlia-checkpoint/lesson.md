@@ -92,11 +92,10 @@ Set up logging and define constants:
 
 ```python
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
-)
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
 logger = logging.getLogger("kademlia-example")
 
 # Configure DHT module loggers to inherit from the parent logger
@@ -273,7 +272,7 @@ async def run_node(
 
                 if dht_mode == DHTMode.SERVER:
                     # Store a value in the DHT
-                    msg = "Hello message from Sumanjeet"
+                    msg = "Hello message from Paschal"
                     val_data = msg.encode()
                     try:
                         await dht.put_value(val_key, val_data)
@@ -416,18 +415,6 @@ if __name__ == "__main__":
     main()
 ```
 
-## Key Changes from Previous Implementation
-
-The updated implementation includes several important improvements:
-
-1. **Proper DHT Initialization**: The DHT is now properly initialized with the correct mode and peer routing table setup
-2. **Server Address Persistence**: Server addresses are saved to a file and can be loaded by client nodes
-3. **Better Bootstrap Logic**: Improved bootstrap node connection and DHT routing table population
-4. **Enhanced Error Handling**: More robust error handling throughout the application
-5. **Proper Cleanup**: Automatic peer store cleanup with fallback manual implementation
-6. **Command Line Arguments**: Support for runtime configuration via command line arguments
-7. **Environment Variable Integration**: Seamless integration with Docker Compose environment variables
-
 ## Testing Your Implementation
 
 1. Set the environment variables:
@@ -475,6 +462,8 @@ Your implementation should:
 - ✅ Advertise and discover content providers
 - ✅ Handle peer discovery and routing events
 - ✅ Maintain persistent server address information
+
+## Hints
 
 ## Hint - Complete Solution
 
@@ -526,11 +515,10 @@ from libp2p.tools.utils import (
 )
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
-)
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
 logger = logging.getLogger("kademlia-example")
 
 # Configure DHT module loggers to inherit from the parent logger
@@ -694,7 +682,7 @@ async def run_node(
 
                 if dht_mode == DHTMode.SERVER:
                     # Store a value in the DHT
-                    msg = "Hello message from Sumanjeet"
+                    msg = "Hello message from Paschal"
                     val_data = msg.encode()
                     try:
                         await dht.put_value(val_key, val_data)
