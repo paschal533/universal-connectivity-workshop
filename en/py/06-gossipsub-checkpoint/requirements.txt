@@ -1,5 +1,0 @@
-libp2p
-trio
-trio-asyncio
-janus
-base58

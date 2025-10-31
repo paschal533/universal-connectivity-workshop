@@ -460,11 +460,11 @@ from libp2p.peer.peerinfo import info_from_p2p_addr
 from libp2p.tools.async_service.trio_service import background_trio_service
 import multiaddr
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(message)s",
-    handlers=[logging.StreamHandler()]
-)
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
+
 logger = logging.getLogger("main")
 
 GOSSIPSUB_PROTOCOL_ID = "/meshsub/1.0.0"
