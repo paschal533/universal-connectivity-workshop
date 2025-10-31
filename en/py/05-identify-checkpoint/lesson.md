@@ -76,21 +76,14 @@ Then there are specialized tools:
 
 ### 2. Logging Configuration
 ```python
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("identify_checkpoint.log", mode="w", encoding="utf-8"),
-    ],
-)
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
 ```
 
 **What’s happening here?**
-This is like setting up a security camera and a logbook. The app will:
-- Record events at the `INFO` level (normal updates, not super detailed unless you ask for it later with `--verbose`).
-- Format logs with a timestamp, level (e.g., INFO, ERROR), and message.
-- Send logs to two places: your screen (so you see what’s happening) and a file called `identify_checkpoint.log` (overwritten each time you run the app).
+This is like setting up a security camera and a logbook.
 
 **Why?** It helps you track what the app is doing, spot issues, and debug problems by checking the log file.
 
@@ -725,7 +718,9 @@ This code creates a P2P networking app that:
 
 Think of it as a chat app for computers that automatically checks who’s online and shares contact info, all while keeping things secure and organized. Each block handles a specific job, from setting up the network to managing connections and handling messages.
 
-## Complete Implementation
+## Hints
+
+## Hint - Complete Solution
 
 Here's the complete, working implementation:
 
@@ -750,15 +745,10 @@ from libp2p.security.noise.transport import Transport as NoiseTransport
 from libp2p.stream_muxer.yamux.yamux import Yamux
 from libp2p.stream_muxer.yamux.yamux import PROTOCOL_ID as YAMUX_PROTOCOL_ID
 
-# Configure detailed logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("identify_checkpoint.log", mode="w", encoding="utf-8"),
-    ],
-)
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("multiaddr").setLevel(logging.WARNING)
+logging.getLogger("libp2p").setLevel(logging.WARNING)
+logging.getLogger("async_service").setLevel(logging.WARNING)
 
 # Protocol constants
 PING_PROTOCOL_ID = TProtocol("/ipfs/ping/1.0.0")

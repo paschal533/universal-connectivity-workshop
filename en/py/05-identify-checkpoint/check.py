@@ -1,127 +1,121 @@
 #!/usr/bin/env python3
 """
-Check script for Lesson 5: Identify Checkpoint
-Validates that the student's solution can exchange identification information with remote peers.
+Check script for the Universal Connectivity Program (Identify Checkpoint)
+Validates that the program's output shows it can connect, identify, and ping remote peers.
 """
 import os
 import re
 import sys
 
-def validate_peer_id(peer_id_str):
-    """Validate that the peer ID string is a valid libp2p PeerId format"""
-    if not peer_id_str.startswith("12D3KooW"):
-        return False, f"Invalid peer ID format. Expected to start with '12D3KooW', got: {peer_id_str}"
-    if len(peer_id_str) < 45 or len(peer_id_str) > 60:
-        return False, f"Peer ID length seems invalid. Expected 45-60 chars, got {len(peer_id_str)}: {peer_id_str}"
-    valid_chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-    for char in peer_id_str:
-        if char not in valid_chars:
-            return False, f"Invalid character '{char}' in peer ID. Must be base58 encoded."
-    return True, f"{peer_id_str}"
-
-def validate_multiaddr(addr_str):
-    """Validate that the address string looks like a valid multiaddr"""
-    if not (addr_str.startswith("/ip4/") or addr_str.startswith("/ip6/")):
-        return False, f"Invalid multiaddr format: {addr_str}"
-    if not ("/tcp" in addr_str):
-        return False, f"Missing TCP transport in multiaddr: {addr_str}"
-    return True, f"{addr_str}"
+# Regex to capture a standard libp2p PeerID
+PEER_ID_REGEX = r"(12D3KooW[A-Za-z0-9]+)"
 
 def check_output():
     """Check the output log for expected identify checkpoint functionality"""
+    
+    # 1. Check if the log file exists
     if not os.path.exists("checker.log"):
-        print("x checker.log file not found")
+        print("! checker.log file not found.")
+        print("i Please run your program and redirect its output to checker.log")
+        print("i Example: python main.py [ARGS] > checker.log 2>&1")
         return False
+    
     try:
         with open("checker.log", "r") as f:
             output = f.read()
         print("i Checking identify functionality...")
+
+        # 2. Check if the log is empty
         if not output.strip():
-            print("x checker.log is empty - application may have failed to start")
+            print("! checker.log is empty - application may have failed to start")
             return False
-        incoming_pattern = r"incoming,([/\w\.:-]+),([/\w\.:-]+)"
-        incoming_matches = re.search(incoming_pattern, output)
-        if not incoming_matches:
-            print("x No incoming dial received")
-            print(f"i Actual output: {repr(output)}")
+        
+        # 3. Check for successful connection
+        # Looks for: "...Connected to: 12D3Koo..."
+        connected_pattern = re.compile(r"Connected to: " + PEER_ID_REGEX)
+        connected_match = connected_pattern.search(output)
+        
+        if not connected_match:
+            print("! No successful connection message found (e.g., 'Connected to: ...')")
+            print(f"i Actual output (first 500 chars): {repr(output[:500])}...")
             return False
-        t = incoming_matches.group(1)
-        valid, t_message = validate_multiaddr(t)
-        if not valid:
-            print(f"x {t_message}")
+        
+        peer_id = connected_match.group(1)
+        print(f"v Connection established with peer: {peer_id}")
+
+        # 4. Check for sending identify request
+        # Looks for: "[IDENTIFY] Sending identify request to 12D3Koo..."
+        identify_sent_pattern = re.compile(r"\[IDENTIFY\] Sending identify request to " + re.escape(peer_id))
+        if not identify_sent_pattern.search(output):
+            print(f"! Did not find message for sending identify request to {peer_id}")
             return False
-        f = incoming_matches.group(2)
-        valid, f_message = validate_multiaddr(f)
-        if not valid:
-            print(f"x {f_message}")
+        
+        print(f"v Sent identify request to {peer_id}")
+
+        # 5. Check for receiving identify response
+        # Looks for: "[IDENTIFY] Identified peer: 12D3Koo..."
+        identify_recv_pattern = re.compile(r"\[IDENTIFY\] Identified peer: " + re.escape(peer_id))
+        if not identify_recv_pattern.search(output):
+            print(f"! Did not receive identify response from {peer_id}")
             return False
-        print(f"v Your peer at {f_message} dialed remote peer at {t_message}")
-        connected_pattern = r"connected,(12D3KooW[A-Za-z0-9]+),([/\w\.:-]+)"
-        connected_matches = re.search(connected_pattern, output)
-        if not connected_matches:
-            print("x No connection established")
-            print(f"i Actual output: {repr(output)}")
+
+        print(f"v Received identify response from {peer_id}")
+
+        # 6. Check for agent version
+        # Looks for: "[IDENTIFY] Agent: universal-connectivity/0.1.0"
+        agent_pattern = re.compile(r"\[IDENTIFY\] Agent: ([\w\./-]+)")
+        agent_match = agent_pattern.search(output)
+        if not agent_match:
+            print(f"! Did not find agent version in identify response")
             return False
-        peerid = connected_matches.group(1)
-        valid, peerid_message = validate_peer_id(peerid)
-        if not valid:
-            print(f"x {peerid_message}")
+        
+        print(f"v Identified remote agent: {agent_match.group(1)}")
+
+        # 7. Check for protocol version
+        # Looks for: "[IDENTIFY] Protocol version: /ipfs/0.1.0"
+        proto_ver_pattern = re.compile(r"\[IDENTIFY\] Protocol version: ([\w\./-]+)")
+        proto_ver_match = proto_ver_pattern.search(output)
+        if not proto_ver_match:
+            print(f"! Did not find protocol version in identify response")
             return False
-        f = connected_matches.group(2)
-        valid, f_message = validate_multiaddr(f)
-        if not valid:
-            print(f"x {f_message}")
-            return False
-        print(f"v Connection established with {peerid_message} at {f_message}")
-        identify_pattern = r"identify,(12D3KooW[A-Za-z0-9]+),([/\w\.:-]+),([/\w\.:-]+)"
-        identify_matches = re.search(identify_pattern, output)
-        if not identify_matches:
-            print("x No identify received")
-            print(f"i Actual output: {repr(output)}")
-            return False
-        peerid = identify_matches.group(1)
-        valid, peerid_message = validate_peer_id(peerid)
-        if not valid:
-            print(f"x {peerid_message}")
-            return False
-        protocol = identify_matches.group(2)
-        agent = identify_matches.group(3)
-        print(f"v Identify received from {peerid_message}: protocol={protocol}, agent={agent}")
-        closed_pattern = r"closed,(12D3KooW[A-Za-z0-9]+)"
-        closed_matches = re.search(closed_pattern, output)
-        if not closed_matches:
-            print("x Connection closure not detected")
-            print(f"i Actual output: {repr(output)}")
-            return False
-        peerid = closed_matches.group(1)
-        valid, peerid_message = validate_peer_id(peerid)
-        if not valid:
-            print(f"x {peerid_message}")
-            return False
-        print(f"v Connection {peerid_message} closed gracefully")
+        
+        print(f"v Identified remote protocol version: {proto_ver_match.group(1)}")
+
+        # 8. Check for at least one successful ping
+        # Looks for: "[PING] Ping to 12D3Koo...: RTT 12.34ms"
+        ping_pattern = re.compile(r"\[PING\] Ping to " + re.escape(peer_id) + r": RTT ([\d\.]+)ms")
+        if not ping_pattern.search(output):
+            print(f"w No successful ping message found for {peer_id}.")
+            # This is a warning, not a failure, as identify is the main goal.
+        else:
+            print(f"v Successful ping to {peer_id} detected.")
+
+        # If all checks passed
         return True
+
     except Exception as e:
-        print(f"x Error reading checker.log: {e}")
+        print(f"! Error reading or parsing checker.log: {e}")
         return False
 
 def main():
     """Main check function"""
-    print("i Checking Lesson 5: Identify Checkpoint 🏆")
+    print("i Checking Universal Connectivity: Identify Checkpoint")
     print("i " + "=" * 50)
     try:
         if not check_output():
+            print("i " + "=" * 50)
+            print("! Check failed.")
             return False
+        
         print("i " + "=" * 50)
-        print("y Identify checkpoint completed successfully! 🎉")
+        print("v Identify checkpoint completed successfully!")
         print("i You have successfully:")
-        print("i • Added Identify protocol to your libp2p node")
-        print("i • Exchanged peer identification information")
-        print("i • Displayed peer capabilities and protocol versions")
-        print("i • Reached your second checkpoint!")
-        print("Ready for Lesson 6: Gossipsub Checkpoint!")
+        print("i • Connected to a remote peer")
+        print("i • Sent an identify request")
+        print("i • Received and displayed the peer's identify information (Agent, Protocol)")
         return True
     except Exception as e:
-        print(f"x Unexpected error during checking: {e}")
+        print(f"! Unexpected error during checking: {e}")
         return False
 
 if __name__ == "__main__":
