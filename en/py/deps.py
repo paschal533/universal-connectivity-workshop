@@ -6,7 +6,7 @@ Checks that all required Python packages and tools are available.
 
 import sys
 import subprocess
-import importlib.util
+import importlib
 import pkg_resources
 from packaging import version
 
@@ -16,10 +16,10 @@ def check_python_version():
     current_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     
     if sys.version_info < (3, 8):
-        print(f"! Python {min_version} or higher is required. Current version: {current_version}")
+        print(f"[!] Python {min_version} or higher is required. Current version: {current_version}")
         return False
     
-    print(f"v Python {current_version} is installed")
+    print(f"[OK] Python {current_version} is installed")
     return True
 
 def check_pip():
@@ -27,32 +27,47 @@ def check_pip():
     try:
         import pip
         pip_version = pip.__version__
-        print(f"v pip {pip_version} is installed")
+        print(f"[OK] pip {pip_version} is installed")
         return True
     except ImportError:
-        print("! pip is not installed")
+        print("[!] pip is not installed")
         return False
 
-def check_package(package_name, min_version=None):
+def install_package(package_name, min_version=None):
+    """Install a Python package using pip"""
+    package_spec = f"{package_name}>={min_version}" if min_version else package_name
+    print(f"Installing {package_spec}...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package_spec, "-q"])
+        print(f"[OK] Successfully installed {package_name}")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"[FAIL] Failed to install {package_name}")
+        return False
+
+def check_package(package_name, min_version=None, auto_install=False):
     """Check if a Python package is installed with optional version check"""
     try:
         if min_version:
             pkg_resources.require(f"{package_name}>={min_version}")
             installed_version = pkg_resources.get_distribution(package_name).version
-            print(f"v {package_name} {installed_version} is installed")
+            print(f"[OK] {package_name} {installed_version} is installed")
         else:
             importlib.import_module(package_name)
             try:
                 installed_version = pkg_resources.get_distribution(package_name).version
-                print(f"v {package_name} {installed_version} is installed")
+                print(f"[OK] {package_name} {installed_version} is installed")
             except:
-                print(f"v {package_name} is installed")
+                print(f"[OK] {package_name} is installed")
         return True
     except (ImportError, pkg_resources.DistributionNotFound, pkg_resources.VersionConflict):
         if min_version:
-            print(f"! {package_name} >= {min_version} is required")
+            print(f"[!] {package_name} >= {min_version} is required")
         else:
-            print(f"! {package_name} is not installed")
+            print(f"[!] {package_name} is not installed")
+        
+        if auto_install:
+            return install_package(package_name, min_version)
         return False
 
 def check_command(command, description=None):
@@ -61,27 +76,21 @@ def check_command(command, description=None):
         result = subprocess.run([command, "--version"], 
                                 capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            print(f"v {command} is installed")
+            print(f"[OK] {command} is installed")
             return True
         else:
-            print(f"! {command} is not available")
+            print(f"[!] {command} is not available")
             return False
     except (FileNotFoundError, subprocess.TimeoutExpired):
         desc = f" ({description})" if description else ""
-        print(f"! {command}{desc} is not installed")
+        print(f"[!] {command}{desc} is not installed")
         return False
 
 def install_instructions():
     """Print installation instructions for missing dependencies"""
     print("\n" + "="*60)
-    print("INSTALLATION INSTRUCTIONS")
+    print("ADDITIONAL INSTALLATION INSTRUCTIONS")
     print("="*60)
-    print("\nTo install the required Python packages, run:")
-    print("pip install trio multiaddr protobuf")
-    print("\nAlternatively, install from source:")
-    print("git clone https://github.com/libp2p/py-libp2p.git")
-    print("cd py-libp2p")
-    print("pip install -e .")
     print("\nFor Docker (if you plan to use containerized lessons):")
     print("Visit: https://docs.docker.com/get-docker/")
 
@@ -89,6 +98,12 @@ def main():
     """Main dependency checking function"""
     print("Checking dependencies for py-libp2p Universal Connectivity Workshop...")
     print("="*70)
+    
+    # Check for --auto-install flag
+    auto_install = "--auto-install" in sys.argv or "-y" in sys.argv
+    
+    if auto_install:
+        print("Auto-install mode enabled\n")
     
     all_dependencies_met = True
     
@@ -99,6 +114,8 @@ def main():
     # Check pip
     if not check_pip():
         all_dependencies_met = False
+        print("\n[ERROR] pip is required but not installed. Please install pip first.")
+        sys.exit(1)
     
     # Check core Python packages
     required_packages = [
@@ -108,9 +125,37 @@ def main():
     ]
     
     print("\nChecking required Python packages:")
+    packages_to_install = []
+    
     for package, min_ver in required_packages:
-        if not check_package(package, min_ver):
+        if not check_package(package, min_ver, auto_install=False):
+            packages_to_install.append((package, min_ver))
             all_dependencies_met = False
+    
+    # Install missing packages if needed
+    if packages_to_install:
+        if auto_install:
+            print("\nInstalling missing packages...")
+            for package, min_ver in packages_to_install:
+                if install_package(package, min_ver):
+                    all_dependencies_met = True
+                else:
+                    all_dependencies_met = False
+        else:
+            print("\n" + "="*70)
+            print("Would you like to install missing packages now? (y/n): ", end="")
+            response = input().lower().strip()
+            
+            if response in ['y', 'yes']:
+                print("\nInstalling missing packages...")
+                for package, min_ver in packages_to_install:
+                    if install_package(package, min_ver):
+                        all_dependencies_met = True
+                    else:
+                        all_dependencies_met = False
+            else:
+                print("\nYou can install them manually with:")
+                print("pip install trio multiaddr protobuf")
     
     # Check system tools
     print("\nChecking system tools:")
@@ -121,10 +166,10 @@ def main():
     
     print("\n" + "="*70)
     if all_dependencies_met:
-        print("v All required dependencies are met!")
+        print("[SUCCESS] All required dependencies are met!")
         print("You're ready to start the workshop!")
     else:
-        print("! Some required dependencies are missing.")
+        print("[!] Some required dependencies are missing.")
         install_instructions()
         sys.exit(1)
 
