@@ -8,7 +8,6 @@ import sys
 import subprocess
 import importlib
 import pkg_resources
-from packaging import version
 
 def check_python_version():
     """Check if Python version meets minimum requirements"""
