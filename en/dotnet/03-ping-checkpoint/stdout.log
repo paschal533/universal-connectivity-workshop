@@ -1,5 +1,0 @@
-Starting Universal Connectivity Application...
-Local peer id: 12D3KooWG9WiZc82HTKzCDRVzvSabSZxd8DtVPqsLDX3QuCM7GCA
-Listening on: /ip4/0.0.0.0/tcp/39593/p2p/12D3KooWG9WiZc82HTKzCDRVzvSabSZxd8DtVPqsLDX3QuCM7GCA
-Connecting to: /ip4/172.16.16.17/tcp/9092
-Failed: No address was passed into DialAsync
